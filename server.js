@@ -5,6 +5,7 @@ const { getDatabase, ref, get, update } = require('firebase/database');
 const bodyParser = require('body-parser');
 
 const app = express();
+const PORT = 3000;
 
 // ✅ Firebase Configuration
 const firebaseConfig = {
@@ -26,14 +27,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// ✅ API Routes
-app.get('/api/cars', async (req, res) => {
+
+// ✅ Route: Get all cars grouped by category
+app.get('/cars', async (req, res) => {
     try {
         const carsRef = ref(db, 'cars');
         const snapshot = await get(carsRef);
         
         if (snapshot.exists()) {
-            res.json(snapshot.val());
+            const carsData = snapshot.val();
+            res.json(carsData);
         } else {
             res.status(404).json({ error: "No cars found" });
         }
@@ -42,27 +45,56 @@ app.get('/api/cars', async (req, res) => {
     }
 });
 
-app.get('/api/cars/:category/:model_no', async (req, res) => {
+// ✅ Route: Show voting form for a specific car
+app.get('/cars/:category/:model_no', async (req, res) => {
     try {
         const { category, model_no } = req.params;
         const carRef = ref(db, `cars/${category}/${model_no}`);
         const snapshot = await get(carRef);
 
         if (!snapshot.exists()) {
-            return res.status(404).json({ error: "Car not found" });
+            return res.status(404).send("Car not found in this category.");
         }
 
-        res.json(snapshot.val());
+        const carData = snapshot.val();
+
+        res.send(`
+            <html>
+            <head>
+                <title>Vote for ${category} ${model_no}</title>
+            </head>
+            <body>
+                <h2>Vote for Car: ${category} ${model_no}</h2>
+               
+
+                <form action="/vote/${category}/${model_no}" method="POST">
+                    <label>Car Message Rating:</label><br>
+                    ${generateRadioButtons('message')}
+                    
+                    <label>Uniqueness Rating:</label><br>
+                    ${generateRadioButtons('uniqueness')}
+                    
+                    <label>Art Quality Rating:</label><br>
+                    ${generateRadioButtons('art_quality')}
+                    
+                    <br><br>
+                    <button type="submit">Submit Vote</button>
+                </form>
+            </body>
+            </html>
+        `);
     } catch (error) {
-        res.status(500).json({ error: "Error loading car details" });
+        res.status(500).send("Error loading form.");
     }
 });
 
-app.post('/api/vote/:category/:model_no', async (req, res) => {
+// ✅ Route: Handle vote submission and update Firebase
+app.post('/vote/:category/:model_no', async (req, res) => {
     try {
         const { category, model_no } = req.params;
         let { message, uniqueness, art_quality } = req.body;
 
+        // Convert ratings to numbers
         message = parseInt(message) || 0;
         uniqueness = parseInt(uniqueness) || 0;
         art_quality = parseInt(art_quality) || 0;
@@ -72,6 +104,7 @@ app.post('/api/vote/:category/:model_no', async (req, res) => {
 
         let existingRatings = snapshot.exists() ? snapshot.val() : { message: 0, uniqueness: 0, art_quality: 0, total_votes: 0 };
 
+        // ✅ Sum up votes
         const updatedRatings = {
             message: existingRatings.message + message,
             uniqueness: existingRatings.uniqueness + uniqueness,
@@ -80,12 +113,37 @@ app.post('/api/vote/:category/:model_no', async (req, res) => {
             total_score: existingRatings.message + existingRatings.uniqueness + existingRatings.art_quality + message + uniqueness + art_quality
         };
 
+        // ✅ Update Firebase
         await update(carRef, updatedRatings);
-        res.json({ success: true, updatedRatings });
+
+        res.send(`
+            <h2>✅ Vote Submitted!</h2>
+            <p>Total Votes: ${updatedRatings.total_votes}</p>
+            <p>Updated Ratings:</p>
+            <ul>
+                <li>Car Message: ${updatedRatings.message}</li>
+                <li>Uniqueness: ${updatedRatings.uniqueness}</li>
+                <li>Art Quality: ${updatedRatings.art_quality}</li>
+                <li>Total Score: ${updatedRatings.total_score}</li>
+            </ul>
+            <a href="/cars/${category}/${model_no}">⬅ Go Back</a>
+        `);
     } catch (error) {
-        res.status(500).json({ error: "Error saving vote" });
+        console.error("❌ Error saving vote:", error);
+        res.status(500).send("Error saving vote");
     }
 });
 
-// ✅ Export app for Vercel
-module.exports = app;
+// ✅ Helper function to generate radio buttons
+function generateRadioButtons(name) {
+    let buttons = "";
+    for (let i = 1; i <= 5; i++) {
+        buttons += `<input type="radio" name="${name}" value="${i}" required> ${i} `;
+    }
+    return buttons + "<br><br>";
+}
+
+// ✅ Start server
+app.listen(PORT, () => {
+    console.log(`🚀 Server is running at http://localhost:${PORT}`);
+});
